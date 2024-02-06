@@ -179,10 +179,10 @@ class DeformableTransformer(nn.Module):
         else:
             # n,2x256 -> n,256, n,256  这里的n代表多个尺度的特征，与detr不同，仅考虑了单尺度的特征进行目标检测
             query_embed, tgt = torch.split(query_embed, c, dim=1)
-            query_embed = query_embed.unsqueeze(0).expand(bs, -1, -1)
+            query_embed = query_embed.unsqueeze(0).expand(bs, -1, -1) # bs,n,256
             tgt = tgt.unsqueeze(0).expand(bs, -1, -1)
             # bs,n,2作为位置坐标的偏移量
-            reference_points = self.reference_points(query_embed).sigmoid()
+            reference_points = self.reference_points(query_embed).sigmoid() # bs,n,2
             init_reference_out = reference_points
 
         # decoder
@@ -245,17 +245,19 @@ class DeformableTransformerEncoder(nn.Module):
 
     @staticmethod
     def get_reference_points(spatial_shapes, valid_ratios, device):
+        # 在encoder的部分生成以特征图为参照的grid锚点，作为reference_point，用valid_ratios为比例进行缩放，不进行归一化
+        # 将多个尺度的grid同时缩放到多个尺度下
         reference_points_list = []
         for lvl, (H_, W_) in enumerate(spatial_shapes):
 
             ref_y, ref_x = torch.meshgrid(torch.linspace(0.5, H_ - 0.5, H_, dtype=torch.float32, device=device),
-                                          torch.linspace(0.5, W_ - 0.5, W_, dtype=torch.float32, device=device))
-            ref_y = ref_y.reshape(-1)[None] / (valid_ratios[:, None, lvl, 1] * H_)
-            ref_x = ref_x.reshape(-1)[None] / (valid_ratios[:, None, lvl, 0] * W_)
-            ref = torch.stack((ref_x, ref_y), -1)
+                                          torch.linspace(0.5, W_ - 0.5, W_, dtype=torch.float32, device=device))  # hxw
+            ref_y = ref_y.reshape(-1)[None] / (valid_ratios[:, None, lvl, 1] * H_)  # 1, hxw
+            ref_x = ref_x.reshape(-1)[None] / (valid_ratios[:, None, lvl, 0] * W_)  # 1, hxw
+            ref = torch.stack((ref_x, ref_y), -1)  # 1, hxw, 2
             reference_points_list.append(ref)
-        reference_points = torch.cat(reference_points_list, 1)
-        reference_points = reference_points[:, :, None] * valid_ratios[:, None]
+        reference_points = torch.cat(reference_points_list, 1)  # 1, hxw(n levels), 2
+        reference_points = reference_points[:, :, None] * valid_ratios[:, None]  # 1, hxw(n levels), 1, 2  * 1, 1, 4, 2 -> 1, hxw(n levels),4,2
         return reference_points
 
     def forward(self, src, spatial_shapes, level_start_index, valid_ratios, pos=None, padding_mask=None):
